@@ -7,6 +7,7 @@ pub struct Task {
     pub status: Status,
 }
 
+// TODO: derive Debug, Clone, PartialEq, Serialize, Deserialize
 pub struct TaskStore {
     pub version: u32,
     pub next_id: u32,
