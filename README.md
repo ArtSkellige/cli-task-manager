@@ -28,3 +28,8 @@ Created on first save. Missing file = empty task list, not an error.
 - [ ] list --status
 - [ ] delete
 - [ ] stats
+
+## Project-wide invariants
+
+- `Status` renders through `Display` exactly as it serializes to JSON: `todo`, `in-progress`, `done`.
+- `Task`'s `Display` is human-facing only and is never parsed.
