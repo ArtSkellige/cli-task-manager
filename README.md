@@ -47,3 +47,5 @@ it holds three responsibilities - see Known debts.
 
 - `Status` renders through `Display` exactly as it serializes to JSON: `todo`, `in-progress`, `done`.
 - `Task`'s `Display` is human-facing only and is never parsed.
+- Only `version: 1` is accepted. Any other value is a hard error: refuse to
+  load, exit without writing the data file.
