@@ -31,15 +31,15 @@ Created on first save. Missing file = empty task list, not an error.
 
 ## Layout
 
-Single file: `src/main.rs` defines the data types. Command logic and JSON
-read/write will land in the same file as the roadmap progresses, at which point
-it holds three responsibilities - see Known debts.
+Single file: `src/main.rs` defines the data types and applies the command rules
+(`add_task`, `list_tasks`, `list_by_status`). JSON read/write lands in the same
+file on Day 5, giving it three responsibilities - see Known debts.
 
 ### Known debts
 
-- `src/main.rs` - will need "and" by Day 5: defines the data types, applies
-  command rules, and reads/writes the data file. Split at the IO/logic seam
-  during the Day 7 refactor, or sooner if the file crosses ~350 lines. Left
+- `src/main.rs` - already needs an "and": defines the data types and applies
+  command rules. Reads/writes the data file from Day 5. Split at the IO/logic
+  seam during the Day 7 refactor, or sooner if the file crosses ~350 lines. Left
   alone for now because module paths and visibility aren't concepts I've
   practised yet.
 
@@ -49,3 +49,10 @@ it holds three responsibilities - see Known debts.
 - `Task`'s `Display` is human-facing only and is never parsed.
 - Only `version: 1` is accepted. Any other value is a hard error: refuse to
   load, exit without writing the data file.
+- `TaskStore::next_id` is the only source of task IDs. `TaskStore::add_task` is
+  the only path that allocates one, and it bumps `next_id` only after the task
+  is successfully created. `Task::new` takes an `id` from its caller and does
+  not check it — calling it directly outside `add_task` can produce duplicate
+  IDs and is not supported.
+- `list_tasks` and `list_by_status` return tasks in insertion order, which is
+  ascending `id` order. Display order is never re-sorted.
