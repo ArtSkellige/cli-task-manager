@@ -49,21 +49,14 @@ between runs yet.
 
 ## Layout
 
-One line per file that holds a decision. Generated files, lockfiles, and data
-fixtures are not listed. Sizes are deliberately absent - they go stale; only
-threshold exceptions are recorded.
+Each file gets one sentence with no "and". A line needing an "and" holds more
+than one responsibility and appears under Known debts.
 
-Rule: each responsibility is one sentence with no "and". A line that needs an
-"and" is a split waiting to happen, and stays on this list as a known debt.
-
-| Path           | Responsibility (one sentence, no "and")                         | Threshold                                                            |
+| Path           | Responsibility                                                  | Threshold                                                            |
 | -------------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `src/lib.rs`   | Defines the task data types, their error type, and their rules. |                                                                      |
 | `src/tests.rs` | Holds the unit tests for the library.                           | 800 - one test per behaviour; grouping them elsewhere hides coverage |
 | `src/main.rs`  | Parses CLI arguments, then hands off to the library.            |                                                                      |
-
-Threshold column: leave blank for the default. Fill it only when a file has an
-approved exception, always with the reason.
 
 ### Known debts
 
