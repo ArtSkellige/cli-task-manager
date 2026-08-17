@@ -32,6 +32,7 @@ fn main() {
         let mut store = TaskStore::load()?;
         let task = store.add_task(&title)?;
 
+        store.save()?;
         println!("added: {task}");
         Ok(())
     }
@@ -82,6 +83,7 @@ fn main() {
         let mut store = TaskStore::load()?;
 
         store.delete_task(id)?;
+        store.save()?;
         println!("task {id} deleted successfully.");
         Ok(())
     }
@@ -105,6 +107,7 @@ fn main() {
         let mut store = TaskStore::load()?;
 
         store.update_status(id, new_status)?;
+        store.save()?;
         println!("task {id} status updated to {new_status}.");
         Ok(())
     }

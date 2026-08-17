@@ -1,4 +1,5 @@
 use super::*;
+use tempfile::TempDir;
 
 fn setup_empty_store() -> TaskStore {
     TaskStore {
@@ -366,5 +367,155 @@ fn error_display_missing_status_value() {
     assert_eq!(
         TaskError::MissingStatusValue.to_string(),
         "--status needs a value: expected todo, in-progress, or done"
+    );
+}
+
+#[test]
+fn source_exposes_wrapped_io_error() {
+    let inner = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "boom");
+    let src = TaskError::WriteFailed(inner)
+        .source()
+        .unwrap()
+        .downcast_ref::<std::io::Error>()
+        .unwrap()
+        .kind();
+    assert_eq!(src, std::io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+fn source_is_none_for_plain_variant() {
+    assert!(TaskError::EmptyTitle.source().is_none());
+}
+
+// These three pin the exact user-facing wording, including the path.
+// If DATA_PATH ever changes, update these strings too - the failure is expected, not a bug.
+#[test]
+fn error_display_read_failed() {
+    let io_err = std::io::Error::from(std::io::ErrorKind::NotFound);
+    let err = TaskError::ReadFailed(io_err);
+    assert!(err.to_string().starts_with("could not read ./tasks.json:"));
+}
+
+#[test]
+fn error_display_write_failed() {
+    let io_err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    let err = TaskError::WriteFailed(io_err);
+    assert!(err.to_string().starts_with("could not write ./tasks.json:"));
+}
+
+#[test]
+fn error_display_json() {
+    let json_err = serde_json::from_str::<serde_json::Value>("").unwrap_err();
+    let err = TaskError::Json(json_err);
+    assert!(
+        err.to_string()
+            .starts_with("./tasks.json is not valid JSON:")
+    );
+}
+
+#[test]
+fn taskstore_rejects_unknown_field() {
+    let json = r#"{"version":1,"next_id":1,"tasks":[],"bogus":true}"#;
+    let err = serde_json::from_str::<TaskStore>(json).unwrap_err();
+    assert!(err.to_string().contains("unknown field `bogus`"));
+}
+
+#[test]
+fn taskstore_rejects_missing_field() {
+    let json = r#"{"version":1,"next_id":1}"#;
+    let err = serde_json::from_str::<TaskStore>(json).unwrap_err();
+    assert!(err.to_string().contains("missing field `tasks`"));
+}
+
+#[test]
+fn task_rejects_unknown_field() {
+    let json = r#"{"id":1,"title":"x","status":"todo","bogus":true}"#;
+    let err = serde_json::from_str::<Task>(json).unwrap_err();
+    assert!(err.to_string().contains("unknown field `bogus`"));
+}
+
+#[test]
+fn task_rejects_missing_field() {
+    let json = r#"{"id":1,"status":"todo"}"#;
+    let err = serde_json::from_str::<Task>(json).unwrap_err();
+    assert!(err.to_string().contains("missing field `title`"));
+}
+
+#[test]
+fn from_json_accepts_version_one() {
+    let json = r#"{"version":1,"next_id":2,
+"tasks":[{"id":1,"title":"x","status":"todo"}]}"#;
+    let store = TaskStore::from_json(json).unwrap();
+    assert_eq!(store.next_id, 2);
+}
+
+#[test]
+fn from_json_rejects_version_too_new() {
+    let json = r#"{"version":2,"next_id":1,"tasks":[]}"#;
+    let err = TaskStore::from_json(json).unwrap_err();
+    assert!(matches!(err, TaskError::FileVersionTooNew { found: 2 }));
+}
+
+#[test]
+fn from_json_rejects_version_zero() {
+    let json = r#"{"version":0,"next_id":1,"tasks":[]}"#;
+    let err = TaskStore::from_json(json).unwrap_err();
+    assert!(matches!(err, TaskError::FileVersionInvalid { found: 0 }));
+}
+
+#[test]
+fn from_json_rejects_empty_input() {
+    let err = TaskStore::from_json("").unwrap_err();
+    assert!(matches!(err, TaskError::Json(_)));
+}
+
+#[test]
+fn load_from_missing_file_returns_empty_store() {
+    let dir = TempDir::new().unwrap();
+    let store = TaskStore::load_from(&dir.path().join("tasks.json")).unwrap();
+
+    assert_eq!(store.version, 1);
+    assert_eq!(store.next_id, 1);
+    assert!(store.tasks.is_empty());
+}
+
+#[test]
+fn save_to_then_load_from_round_trips() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("tasks.json");
+
+    let mut store = setup_empty_store();
+    store.add_task("Task 1").unwrap();
+    store.add_task("Task 2").unwrap();
+
+    store.save_to(&path).unwrap();
+    assert_eq!(TaskStore::load_from(&path).unwrap(), store);
+}
+
+#[test]
+fn save_to_overwrites_existing_file() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("tasks.json");
+
+    let mut first = setup_empty_store();
+    first.add_task("Old").unwrap();
+    first.save_to(&path).unwrap();
+
+    let second = setup_empty_store();
+    second.save_to(&path).unwrap();
+
+    assert!(TaskStore::load_from(&path).unwrap().tasks.is_empty());
+}
+
+#[test]
+fn save_to_leaves_no_temp_file() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("tasks.json");
+
+    setup_empty_store().save_to(&path).unwrap();
+
+    assert!(
+        !dir.path().join("tasks.json.tmp").exists(),
+        "temp file survived a successful save; the rename did not happen"
     );
 }

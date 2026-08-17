@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
+use std::path::Path;
 use std::str::FromStr;
 
 pub const USAGE: &str = "usage: task-manager <add|list|delete|update> [args]";
+const DATA_PATH: &str = "tasks.json";
 
-// TODO: Day 5 - enforce on load; only version 1 is accepted.
 #[derive(Debug)]
 pub enum TaskError {
     FileVersionTooNew { found: u32 },
@@ -18,6 +19,9 @@ pub enum TaskError {
     UnknownCommand { given: String },
     MissingCommand,
     MissingStatusValue,
+    ReadFailed(std::io::Error),
+    WriteFailed(std::io::Error),
+    Json(serde_json::Error),
 }
 
 impl fmt::Display for TaskError {
@@ -52,13 +56,25 @@ impl fmt::Display for TaskError {
                 f,
                 "--status needs a value: expected todo, in-progress, or done"
             ),
+            TaskError::ReadFailed(e) => write!(f, "could not read ./{DATA_PATH}: {e}"),
+            TaskError::WriteFailed(e) => write!(f, "could not write ./{DATA_PATH}: {e}"),
+            TaskError::Json(e) => write!(f, "./{DATA_PATH} is not valid JSON: {e}"),
         }
     }
 }
 
-impl Error for TaskError {}
+impl Error for TaskError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            TaskError::ReadFailed(e) | TaskError::WriteFailed(e) => Some(e),
+            TaskError::Json(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Task {
     pub id: u32,
     pub title: String,
@@ -87,6 +103,7 @@ impl Task {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TaskStore {
     pub version: u32,
     pub next_id: u32,
@@ -94,13 +111,48 @@ pub struct TaskStore {
 }
 
 impl TaskStore {
-    // TODO: Day 5 - load from ./tasks.json; missing file = empty store.
-    pub fn load() -> Result<Self, TaskError> {
-        Ok(TaskStore {
-            version: 1,
-            next_id: 1,
-            tasks: Vec::new(),
-        })
+    pub fn load() -> Result<TaskStore, TaskError> {
+        Self::load_from(Path::new(DATA_PATH))
+    }
+
+    pub fn load_from(path: &Path) -> Result<TaskStore, TaskError> {
+        let data = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(TaskStore {
+                    version: 1,
+                    next_id: 1,
+                    tasks: Vec::new(),
+                });
+            }
+            Err(e) => return Err(TaskError::ReadFailed(e)),
+        };
+
+        Self::from_json(&data)
+    }
+
+    fn from_json(data: &str) -> Result<TaskStore, TaskError> {
+        let store: TaskStore = serde_json::from_str(data).map_err(TaskError::Json)?;
+
+        match store.version {
+            1 => Ok(store),
+            v if v > 1 => Err(TaskError::FileVersionTooNew { found: v }),
+            v => Err(TaskError::FileVersionInvalid { found: v }),
+        }
+    }
+
+    pub fn save(&self) -> Result<(), TaskError> {
+        self.save_to(Path::new(DATA_PATH))
+    }
+
+    pub fn save_to(&self, path: &Path) -> Result<(), TaskError> {
+        let json = serde_json::to_string_pretty(self).map_err(TaskError::Json)?;
+        let temp = path.with_extension("json.tmp");
+
+        std::fs::write(&temp, &json).map_err(TaskError::WriteFailed)?;
+        std::fs::rename(&temp, path).map_err(TaskError::WriteFailed)?;
+
+        Ok(())
     }
 
     pub fn add_task(&mut self, title: &str) -> Result<Task, TaskError> {

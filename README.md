@@ -21,6 +21,11 @@ case-insensitively and trimmed.
 Location: `./tasks.json`, relative to the working directory (project root during development).
 Created on first save. Missing file = empty task list, not an error.
 
+Writes are atomic: `save()` serialises to a sibling temp file (the target path
+with `.tmp` appended, so `./tasks.json.tmp` by default), then renames it over
+the target. The temp file is always in the same directory as the target, which
+is what makes the rename atomic.
+
 ```
 {
   "version": 1,
@@ -42,29 +47,33 @@ Created on first save. Missing file = empty task list, not an error.
 - [x] list --status
 - [x] delete
 - [x] update
-- [ ] stats
 
-Commands are wired end-to-end; persistence lands on Day 5, so nothing survives
-between runs yet.
+Commands are wired end-to-end and persist to `./tasks.json` on every mutation.
 
 ## Layout
 
 Each file gets one sentence with no "and". A line needing an "and" holds more
 than one responsibility and appears under Known debts.
 
-| Path           | Responsibility                                                  | Threshold                                                            |
-| -------------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `src/lib.rs`   | Defines the task data types, their error type, and their rules. |                                                                      |
-| `src/tests.rs` | Holds the unit tests for the library.                           | 800 - one test per behaviour; grouping them elsewhere hides coverage |
-| `src/main.rs`  | Parses CLI arguments, then hands off to the library.            |                                                                      |
+| Path           | Responsibility                                                                          | Threshold                                                            |
+| -------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `src/lib.rs`   | Defines the task data types, their error type, their rules, and their JSON persistence. |                                                                      |
+| `src/tests.rs` | Holds the unit tests for the library.                                                   | 800 - one test per behaviour; grouping them elsewhere hides coverage |
+| `src/main.rs`  | Parses CLI arguments, then hands off to the library.                                    |                                                                      |
 
 ### Known debts
 
-- `src/lib.rs` - responsibility needs an "and": defines the data types and
-  applies the command rules. Split at the types/logic seam if the file crosses
-  ~350 lines. Left alone for now because the types and the rules that guard
-  their invariants change together, and separating them would scatter one
-  contract across two files.
+- `src/lib.rs` - responsibility needs an "and", now three times over: defines
+  the data types, applies the command rules, and owns file I/O. The strongest
+  seam is IO vs logic - `load`/`save` plus the path constants and the
+  `ReadFailed`/`WriteFailed`/`Json` variants could move to `src/store.rs`.
+  Left alone at ~205 lines because the persistence code is thirty lines and
+  splitting now would put `TaskStore` and two of its methods in different
+  files. Revisit if the file crosses ~350 lines or if persistence grows a
+  second concern (backups, migrations, a configurable path).
+- `TaskStore::load_from` and `save_to` are `pub` only so tests can supply a
+  scratch path; nothing outside the crate should call them. `load`/`save` are
+  the real entry points. Revisit if the crate ever gets external consumers.
 - `src/main.rs` - the `run_*` functions live in the binary, so `src/tests.rs`
   cannot reach them. Their argument-shape rules (positional slots, trailing-arg
   rejection) are therefore unverified. Either move the parsing into the library
@@ -90,3 +99,12 @@ than one responsibility and appears under Known debts.
   IDs and is not supported.
 - `list_tasks` and `list_by_status` return tasks in insertion order, which is
   ascending `id` order. Display order is never re-sorted.
+- Missing `./tasks.json` is not an error: `load()` returns an empty store with
+  `version: 1`, `next_id: 1`. Only `ErrorKind::NotFound` is treated this way;
+  any other read failure is a hard error.
+- Both `Task` and `TaskStore` use `serde(deny_unknown_fields)`. This means an
+  unknown key fails as a JSON parse error before the `version` check runs, so a
+  future v2 file carrying a new field reports "not valid JSON" rather than the
+  friendlier `FileVersionTooNew`. Accepted: correctness of the v1 contract
+  outranks the quality of a message for a file format that does not exist yet.
+  Fix by parsing `version` in a first pass if v2 ever ships.
