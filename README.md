@@ -10,11 +10,21 @@ task-manager list
 task-manager list --status <todo|in-progress|done>
 task-manager delete <id>
 task-manager update <id> <todo|in-progress|done>
+task-manager fetch <url>
 ```
 
 `add` joins all remaining arguments into one title. Every other command rejects
 trailing arguments rather than ignoring them. Status arguments are matched
 case-insensitively and trimmed.
+
+`fetch` requests the URL, extracts the text between `<title>` and `</title>`,
+collapses interior whitespace to single spaces, and adds the result as a new
+`todo` task. Tag matching is ASCII-case-insensitive and skips attributes.
+No `<title>` tag, or one with no non-whitespace content, falls back to the
+URL itself as the title.
+HTML entities are not decoded: a page titled `Rust &amp; Go` becomes a task
+titled literally `Rust &amp; Go`. Requests time out after 10 seconds total,
+covering connection and body read.
 
 ## Data file
 
@@ -47,19 +57,21 @@ is what makes the rename atomic.
 - [x] list --status
 - [x] delete
 - [x] update
+- [x] fetch
 
 Commands are wired end-to-end and persist to `./tasks.json` on every mutation.
 
 ## Layout
 
 Each file gets one sentence with no "and". A line needing an "and" holds more
-than one responsibility and appears under Known debts.
+than one responsibility and appears under Known debts. Line counts are deliberately absent -
+they go stale, and they were never the thing that mattered.
 
-| Path           | Responsibility                                                                          | Threshold                                                            |
-| -------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `src/lib.rs`   | Defines the task data types, their error type, their rules, and their JSON persistence. |                                                                      |
-| `src/tests.rs` | Holds the unit tests for the library.                                                   | 800 - one test per behaviour; grouping them elsewhere hides coverage |
-| `src/main.rs`  | Parses CLI arguments, then hands off to the library.                                    |                                                                      |
+| Path           | Responsibility                                                        | Threshold                                                            |
+| -------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `src/lib.rs`   | Defines the task data types, their rules, and their JSON persistence. | 500                                                                  |
+| `src/tests.rs` | Holds the unit tests for the library.                                 | 800 - one test per behaviour; grouping them elsewhere hides coverage |
+| `src/main.rs`  | Parses CLI arguments, fetches URLs, then hands off to the library.    | 500                                                                  |
 
 ### Known debts
 
@@ -67,18 +79,35 @@ than one responsibility and appears under Known debts.
   the data types, applies the command rules, and owns file I/O. The strongest
   seam is IO vs logic - `load`/`save` plus the path constants and the
   `ReadFailed`/`WriteFailed`/`Json` variants could move to `src/store.rs`.
-  Left alone at ~205 lines because the persistence code is thirty lines and
+  Left alone at ~250 lines because the persistence code is thirty lines and
   splitting now would put `TaskStore` and two of its methods in different
   files. Revisit if the file crosses ~350 lines or if persistence grows a
   second concern (backups, migrations, a configurable path).
 - `TaskStore::load_from` and `save_to` are `pub` only so tests can supply a
   scratch path; nothing outside the crate should call them. `load`/`save` are
   the real entry points. Revisit if the crate ever gets external consumers.
-- `src/main.rs` - the `run_*` functions live in the binary, so `src/tests.rs`
-  cannot reach them. Their argument-shape rules (positional slots, trailing-arg
-  rejection) are therefore unverified. Either move the parsing into the library
-  or add an inline test module here once the commands do something worth
-  asserting.
+- `src/main.rs` - responsibility needs an "and": it parses CLI arguments and
+  owns the outbound HTTP call plus the HTML title scrape. The seam is layer of
+  abstraction - `extract_title` is pure logic with no IO, and `run_fetch` is
+  the only IO around it. Left alone because moving `extract_title` to
+  `src/lib.rs` was tried and reverted: a task library that knows about
+  `<title>` tags has absorbed its caller's problem, and that cost outranks the
+  one-sentence rule here. Revisit if a second command needs network access, at
+  which point `src/fetch.rs` holds both.
+- `extract_title` lives in the binary, so `src/tests.rs` cannot reach it. It is
+  the only pure function in the fetch path and the only one worth unit-testing.
+  Covered by an inline `#[cfg(test)]` module in `src/main.rs` instead, which
+  splits the project's tests across two locations. Accepted: coverage of a
+  pure function outranks a single test location.
+- `TaskError::FetchFailed(reqwest::Error)` puts an HTTP crate in the library's
+  public error surface, even though the library itself never makes a request -
+  `run_fetch` lives in `src/main.rs`. The alternative is `FetchFailed(String)`,
+  which drops `reqwest` from the lib's conceptual API. Kept as
+  `reqwest::Error` because it preserves the `Error::source()` chain, so the
+  real diagnostic - DNS failure vs. TLS failure vs. connection refused -
+  survives to the caller instead of being flattened into a message. The
+  coupling is paid at the workspace level regardless. Revisit if the library
+  ever ships as a standalone crate for external consumers.
 
 ## Project-wide invariants
 
