@@ -22,6 +22,8 @@ pub enum TaskError {
     ReadFailed(std::io::Error),
     WriteFailed(std::io::Error),
     Json(serde_json::Error),
+    FetchFailed(reqwest::Error),
+    MissingUrl,
 }
 
 impl fmt::Display for TaskError {
@@ -59,6 +61,8 @@ impl fmt::Display for TaskError {
             TaskError::ReadFailed(e) => write!(f, "could not read ./{DATA_PATH}: {e}"),
             TaskError::WriteFailed(e) => write!(f, "could not write ./{DATA_PATH}: {e}"),
             TaskError::Json(e) => write!(f, "./{DATA_PATH} is not valid JSON: {e}"),
+            TaskError::FetchFailed(e) => write!(f, "failed to fetch: {e}"),
+            TaskError::MissingUrl => write!(f, "no URL provided"),
         }
     }
 }
@@ -68,6 +72,7 @@ impl Error for TaskError {
         match self {
             TaskError::ReadFailed(e) | TaskError::WriteFailed(e) => Some(e),
             TaskError::Json(e) => Some(e),
+            TaskError::FetchFailed(e) => Some(e),
             _ => None,
         }
     }
